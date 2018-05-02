@@ -1,4 +1,6 @@
 
+import sys
+import re
 import logging
 import os
 import shutil
@@ -8,7 +10,6 @@ import tarfile
 import gzip
 
 import numpy as np
-import skipthoughts
 import faiss
 
 
@@ -17,12 +18,14 @@ class Indexer(object):
     Indexer class to manage FAISS indices.
     """
     INDEX = 'index.faiss'
+    TEXT = 'text.zip'
     META = 'meta.json.zip'
 
     def __init__(self, dim=None):
         self.index = None
         if dim is not None:
             self.index = faiss.IndexFlatIP(dim)
+        self.text = []
         self.meta = []
 
     def index_batch(self, batch, texts, meta=None):
@@ -45,6 +48,7 @@ class Indexer(object):
                     "but metadata was provided")
 
         self.index.add(batch)
+        self.text.extend(texts)
         if meta is not None:
             self.meta.extend(meta)
 
@@ -58,16 +62,16 @@ class Indexer(object):
             faiss.normalize_L2(embs)
             self.index_batch(embs, texts, meta)
 
-    def index_files(self, encoder, *fpaths, **kwargs):
+    def index_files(self, encoder, *paths, **kwargs):
         """
         Index files
         """
-        for fpath in fpaths:
-            inp = ((line, {'num': idx, 'fpath': fpath})
-                   for idx, line in enumerate(read_lines(fpath)))
+        for path in paths:
+            inp = ((line, {'num': idx, 'path': path})
+                   for idx, line in read_lines(path))
             self.index_generator(encoder, inp, **kwargs)
 
-    def serialize(self, prefix):
+    def serialize(self, path):
         """
         Serialize index to single tar file with 2 members: 
             - index.faiss
@@ -79,39 +83,51 @@ class Indexer(object):
         indexname = '/tmp/{}-index'.format(fid)
         faiss.write_index(self.index, indexname)
 
+        # texts (temporary fix, in the future it should use a database)
+        textname = '/tmp/{}-texts'.format(fid)
+        with gzip.GzipFile(textname, 'w') as f:
+            for text in self.text:
+                f.write((text + "\n").encode())
+
         # meta
         metaname = '/tmp/{}-index.meta.zip'.format(fid)
         with gzip.GzipFile(metaname, 'w') as f:
             f.write(json.dumps(self.meta).encode())
 
         # package into a tarfile
-        with tarfile.open('{}.index.tar'.format(prefix), 'w') as f:
+        with tarfile.open(ensure_ext(path, 'tar'), 'w') as f:
             f.add(indexname, arcname=Indexer.INDEX)
+            f.add(textname, arcname=Indexer.TEXT)
             f.add(metaname, arcname=Indexer.META)
 
         # cleanup
         os.remove(indexname)
+        os.remove(textname)
         os.remove(metaname)
 
     @classmethod
-    def load(cls, fpath):
+    def load(cls, path):
         """
         Instantiates Indexer from serialized tar
         """
         index, meta = None, None
 
-        with tarfile.open(fpath, 'r') as tar:
+        with tarfile.open(ensure_ext(path, 'tar'), 'r') as tar:
             # read index
             indextmp = '/tmp/{}-index'.format(str(uuid.uuid1()))
             tar.extract(cls.INDEX, path=indextmp)
             index = faiss.read_index(os.path.join(indextmp, cls.INDEX))
             shutil.rmtree(indextmp)
 
+            # read text
+            text = gzip.open(tar.extractfile(cls.TEXT)).read().decode().strip()
+
             # read meta
             meta = json.loads(gzip.open(tar.extractfile(cls.META)).read().decode())
 
         inst = cls()
         inst.index = index
+        inst.text = text.split('\n')
         inst.meta = meta
 
         return inst
@@ -123,7 +139,7 @@ class Indexer(object):
         Parameters
         ===========
         encoder : function that encodes input text into sentence embeddings
-        inp : iterator over dictionaries with entries "num", "fpath" and "text"
+        inp : iterator over dictionaries with entries "num", "path" and "text"
         """
         if self.index.ntotal == 0:
             raise ValueError("Empty index.")
@@ -137,42 +153,81 @@ class Indexer(object):
 
             # serialize
             for bd, bi, bdata in zip(D, I, meta):
-                # fpath num [source_id:similarity]+
-                fp.write('{fpath}\t{num}\t{sims}\n'.format(
-                    fpath=bdata['fpath'],
+                # path num [source_id:similarity]+
+                fp.write('{path}\t{num}\t{sims}\n'.format(
+                    path=bdata['path'],
                     num=bdata['num'],
                     sims='+'.join('{}:{:g}'.format(i, d) for d, i in zip(bd, bi))))
 
-    def query_from_files(self, encoder, prefix, *fpaths, NNs=10, bsize=500, **kwargs):
+    def query_files(self, encoder, outpath, *paths, NNs=10, bsize=500, **kwargs):
         """
         Conveniently process query spread across (possibly) multiple files in a memory
         efficient way
         """
-        query_file = '{}.tsv'.format(prefix)
+        query_file = ensure_ext(outpath, 'tsv')
         if os.path.isfile(query_file):
             raise ValueError("Output query file {} already exists".format(query_file))
 
         with open(query_file, 'a+') as f:
             # write metadata about files for efficient storage
-            fpaths_ = {fpath: idx for idx, fpath in enumerate(fpaths)}
-            f.write("#{}\n".format('\t'.join(fpaths)))
+            paths_ = {path: idx for idx, path in enumerate(paths)}
+            f.write("#{}\n".format('\t'.join(paths)))
 
             # process files
-            for fpath in fpaths:
-                logging.debug("Processing {}".format(fpath))
-                inp = ((line, {'num': idx, 'fpath': fpaths_[fpath]})
-                        for idx, line in enumerate(read_lines(fpath)))
+            for path in paths:
+                logging.debug("Processing {}".format(path))
+                inp = ((line, {'num': idx, 'path': paths_[path]})
+                        for idx, line in read_lines(path))
                 self._query(encoder, inp, f, NNs=NNs, bsize=bsize, **kwargs)
 
-    def inspect(self, query_file):
-        pass
+    @staticmethod
+    def _parse_sims(sims):
+        """
+        Parse similarity queries from the query output file
+        """
+        nn, sims = zip(*map(lambda nn: nn.split(':'), sims.split('+')))
+        nn, sims = list(map(int, nn)), list(map(float, sims))
+        return nn, sims
+
+    def inspect(self, results_file, *query_files, threshold=0.5, max_NNs=5):
+        """
+        Get a generator over matches based on query file. `query_files` must be passed
+        in the same order as they were passed during querying.
+        """
+        with open(ensure_ext(results_file, 'tsv'), 'r') as f:
+            paths_ = next(f).strip()[1:].split('\t')
+
+            for line, (idx, trg) in zip(f, read_lines(*query_files)):
+                # idx should be equal to num
+                path_, num, sims = line.strip().split('\t')
+                path = paths_[int(path_)]
+                nns, sims = Indexer._parse_sims(sims)
+
+                # check threshold
+                if max(sims) < args.threshold:
+                    continue
+
+                # package
+                match = {'trg': trg, 'matches': []}
+                for nn, sim in take(zip(nns, sims), max_NNs):
+                    if sim < args.threshold:
+                        break
+
+                    match['matches'].append(
+                        {'src': self.text[nn],
+                         'meta': self.meta[nn],
+                         'sim': sim})
+
+                yield match
 
 
 def read_lines(*paths):
     for path in paths:
+        idx = 0
         with open(path, 'r') as f:
             for line in f:
-                yield line.strip()
+                yield idx, line.strip()
+                idx += 1
 
 
 def chunks(it, size):
@@ -186,52 +241,98 @@ def chunks(it, size):
         yield buf
 
 
+def take(it, n):
+    tot = 0
+    for i in it:
+        if tot + 1 > n:
+            break
+        yield i
+        tot += 1
+
+
+def ensure_ext(path, ext):
+    if path.endswith(ext):
+        return path
+    return path + ".{}".format(re.sub("^\.", "", ext))
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('action')
     parser.add_argument('--indexer', required=True)
-    parser.add_argument('--index_files')
+    parser.add_argument('--index_files', nargs='*')
     parser.add_argument('--bsize', type=int, default=10000)
     parser.add_argument('--NNs', type=int, default=5)
-    parser.add_argument('--query_files')
+    parser.add_argument('--dim', type=int, default=4800)
+    parser.add_argument('--query_files', nargs='*')
+    parser.add_argument('--results_file')
+    parser.add_argument('--threshold', type=float, default=0.5)
     args = parser.parse_args()
     actions = set(args.action.lower().split())
 
-    print("Loading model...")
-    model = skipthoughts.load_model()
+    # print("Loading model...")
+    # import skipthoughts
+    # model = skipthoughts.load_model()
+
+    # def encoder(sents):
+    #     embs = np.array(skipthoughts.encode(model, sents, use_norm=False))
+    #     return embs
 
     def encoder(sents):
-        embs = np.array(skipthoughts.encode(model, sents, use_norm=False))
-        faiss.normalize_L2(embs)
-        return embs
+        return np.random.randn(len(sents), args.dim)
+
+    indexer = None
+    try:
+        indexer = Indexer.load(args.indexer)
+    except:
+        pass
 
     if 'index' in actions:
+        print("Indexing...")
+        do_serialize = indexer is None and args.indexer
 
-        vecs = encode(list(read_lines(args.index_file)))
-        index = faiss.IndexFlatIP(vecs.shape[1])
-        index.add(vecs)
-        faiss.write_index(index, '{}.index'.format(args.index_file))
+        if len(args.index_files) == 0:
+            raise ValueError("Indexing requires `index_files`")
 
-    elif 'query' in actions:
-        index = None
+        indexer = indexer or Indexer(dim=args.dim)
+        indexer.index_files(encoder, *args.index_files)
+        if do_serialize:
+            indexer.serialize(args.indexer)
+
+    if 'query' in actions:
+        print("Querying...")
+
+        if indexer is None:
+            raise ValueError("Couldn't initialize indexer")
+        if not args.results_file:
+            raise ValueError("Querying requires `results_file`")
+        if len(args.query_files) == 0:
+            raise ValueError("Querying requires `query_files`")
+
+        indexer.query_files(encoder, args.results_file, *args.query_files, NNs=args.NNs)
+
+    if 'inspect' in actions:
+        if not args.results_file:
+            raise ValueError("Inspecting requires `results_file`")
+        if len(args.query_files) == 0:
+            raise ValueError("Querying requires `query_files`")
+
+        matches = indexer.inspect(args.results_file, *args.query_files,
+                                  threshold=args.threshold, max_NNs=args.NNs)
+
         try:
-            index = faiss.read_index(args.index_file)
-        except:
-            raise ValueError("Couldn't read index {}".format(args.index_file))
+            match = next(matches)
+            print(" => {}".format(match['trg']), flush=True)
+            # TODO: print metadata
+            for src in match['matches']:
+                print(" *** [{:.3f}] {}\n".format(src['sim'], src['src']), flush=True)
+                # TODO: print matches
 
-        idx = 0
-        with open('{}.results'.format(args.query_file), 'w+') as q:
-            for n, chunk in enumerate(chunks(read_lines(args.query_file), args.bsize)):
-                print("Processing [{}/{}] lines".format(
-                    n * args.bsize, (n + 1) * args.bsize))
-                vecs = encode(chunk)
-                D, I = index.search(vecs, args.NNs)
-                for d, i in zip(D, I):
-                    idx += 1
-                    q.write("{}\t".format(idx))
-                    q.write("\t".join("{}:{:g}".format(ii, dd) for dd, ii in zip(d, i)))
-                    q.write("\n")
+        except BrokenPipeError:
+            print("Bye!", file=sys.stderr)
 
-    else:
-        raise ValueError("Unknown action", args.action)
+        except StopIteration:
+            print("Finished!", file=sys.stderr)
+
+    sys.stderr.close()
