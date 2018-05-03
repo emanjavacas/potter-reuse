@@ -1,13 +1,19 @@
 
 import os
+import re
 from process_utils import package_tar
+
+
+def join_dots(line):
+    return re.sub('\. \. \.', '...', line)
 
 
 def read_books(path='/home/manjavacas/corpora/potterus/books/'):
     for f in os.listdir(path):
         p = os.path.join(path, f)
         with open(p, 'r') as f:
-            yield os.path.basename(p), [line.strip() for line in f if line.strip()]
+            lines = (join_dots(line.strip()) for line in f if line.strip())
+            yield os.path.basename(p), lines
 
 
 if __name__ == '__main__':

@@ -26,11 +26,15 @@ def preprocess(lines):
     # . . . => ...
     def join_dots_subline(lines):
         for line in lines:
-            if '. . .' in line:
-                line = re.sub('. . .', '...', line)
-            yield line
+            yield re.sub('\. \. \.', '...', line)
 
-    for line in join_dots_subline(lines):
+    # since most of it is dialogue, quotes are rather misleading and making sentence
+    # tokenization unnecessarily harder, ergo => dropped
+    def drop_quotes(lines):
+        for line in lines:
+            yield line.replace('"', "")
+
+    for line in drop_quotes(join_dots_subline(lines)):
         yield line
 
 
