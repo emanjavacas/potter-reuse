@@ -3,7 +3,7 @@ import json
 from collections import defaultdict
 
 
-def read_fanfic(store_meta, path='/home/mike/GitRepos/fanfic/fanfics.json'):
+def read_fanfic(path, store_meta):
     with open(path) as f:
         for idx, line in enumerate(f):
             entry = json.loads(line.strip())
@@ -18,6 +18,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', default='ucto')
     parser.add_argument('--tokenize', action='store_true')
+    parser.add_argument('--root', '/home/mike/GitRepos/fanfic/fanfics.json')
     args = parser.parse_args()
 
     tokenizer = None
@@ -31,7 +32,7 @@ if __name__ == '__main__':
     from process_utils import package_tar
     store_meta = defaultdict(int)
     try:
-        package_tar(fname, read_fanfic(store_meta), tokenizer)
+        package_tar(fname, read_fanfic(args.root, store_meta), tokenizer)
     except Exception as e:
         print("Exception!", str(e))
 

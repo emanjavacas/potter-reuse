@@ -86,7 +86,7 @@ def postprocess(lines, tokenizer=None, calls=0):
         yield line
 
 
-def read_subtitles(tokenizer, path='/home/manjavacas/corpora/potterus/subtitles/'):
+def read_subtitles(path, tokenizer):
     for p in os.listdir(path):
         preprocessed = preprocess(read_lines(os.path.join(path, p)))
         # disable quote detection
@@ -100,9 +100,10 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', default='ucto')
+    parser.add_argument('--root', default='/home/manjavacas/corpora/potterus/subtitles/')
     args = parser.parse_args()
 
     from process_utils import tokenizer, package_tar
     tokenizer = tokenizer(args.model)
     fname = 'subtitles_{}.tar.gz'.format(args.model)
-    package_tar(fname, read_subtitles(tokenizer), None)
+    package_tar(fname, read_subtitles(args.root, tokenizer), None)
