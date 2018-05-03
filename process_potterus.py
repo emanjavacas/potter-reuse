@@ -1,33 +1,29 @@
 
 import os
+from process_utils import package_tar
 
-def read_books(path='/home/manjavacas/corpora/potterus/'):
+
+def read_books(path='/home/manjavacas/corpora/potterus/books/'):
     for f in os.listdir(path):
         p = os.path.join(path, f)
         with open(p, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    yield line
+            yield os.path.basename(p), [line.strip() for line in f if line.strip()]
 
 
 if __name__ == '__main__':
-    model, tokenize, tokenizer = 'ucto', True, None
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model', default='ucto')
+    parser.add_argument('--tokenize', action='store_true')
+    args = parser.parse_args()
 
-    if tokenize:
-        import tokenizer
-        tokenizer = tokenizer.tokenizer(model)
-        fname = 'potterus_{}.txt'.format(model)
+    tokenizer = None
+    if args.tokenize:
+        from process_utils import tokenizer
+        tokenizer = tokenizer(model=args.model)
+        fname = 'potterus_{}.tar.gz'.format(args.model)
     else:
-        fname = 'potterus.raw.txt'
+        fname = 'potterus.raw.tar.gz'
 
-    with open(fname, 'w+') as f:
-        for line in read_books():
-            if tokenize:
-                for subline in tokenizer(line):
-                    f.write(subline)
-                    f.write("\n")
-            else:
-                f.write(line)
-                f.write("\n")
+    package_tar(fname, read_books(), tokenizer)
 

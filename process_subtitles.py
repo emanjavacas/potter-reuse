@@ -1,5 +1,6 @@
 
 import re
+import os
 
 
 def is_timestamp(line):
@@ -33,7 +34,7 @@ def preprocess(lines):
         yield line
 
 
-def postprocess(lines):
+def postprocess(lines, tokenizer=None, calls=0):
     # remove xml
     def remove_xml(lines):
         for line in lines:
@@ -45,10 +46,7 @@ def postprocess(lines):
     # ... plus ...
     def remove_dash(lines):
         for line in lines:
-            if line.startswith('-'):
-                yield line[2:]
-            else:
-                yield line
+            yield re.sub('^[ ]*-[ ]+', '', line)
 
     # ... ... => ' '
     def remove_joint_dots(lines):
@@ -84,22 +82,23 @@ def postprocess(lines):
         yield line
 
 
-def get_subtitle_lines(path, model):
-    from tokenizer import tokenizer
-    tokenizer = tokenizer(model)
-    lines = tokenizer(' '.join(preprocess(read_lines(path))))
-    for line in postprocess(lines):
-        yield line
+def read_subtitles(tokenizer, path='/home/manjavacas/corpora/potterus/subtitles/'):
+    for p in os.listdir(path):
+        preprocessed = preprocess(read_lines(os.path.join(path, p)))
+        # disable quote detection
+        lines = tokenizer(' '.join(preprocessed), ignore_quotes=True)
+        fname = os.path.basename(os.path.join(path, p))
+        yield (fname, list(postprocess(lines, tokenizer)))
 
 
 if __name__ == '__main__':
     import os
-    ROOT = './data/subtitles'
-    model = 'ucto'
-    with open('./data/subtitles_{}.txt'.format(model), 'w+') as f:
-        for path in os.listdir(ROOT):
-            print("Processing {}".format(os.path.join(ROOT, path)))
-            for line in get_subtitle_lines(os.path.join(ROOT, path), model):
-                f.write(line)
-                f.write('\n')
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model', default='ucto')
+    args = parser.parse_args()
 
+    from process_utils import tokenizer, package_tar
+    tokenizer = tokenizer(args.model)
+    fname = 'subtitles_{}.tar.gz'.format(args.model)
+    package_tar(fname, read_subtitles(tokenizer), None)

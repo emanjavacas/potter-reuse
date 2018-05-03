@@ -4,34 +4,43 @@ import sys
 csv.field_size_limit(sys.maxsize)
 
 
-def read_csv(path='/home/manjavacas/corpora/AO3/en_fanfic.csv'):
+def read_csv(store_meta, path='/home/manjavacas/corpora/AO3/en_fanfic.csv'):
     with open(path, 'r') as f:
         reader = csv.reader(f)
         header = next(reader)
-        for line in reader:
-            yield dict(zip(header, line))
+        for idx, line in enumerate(reader):
+            entry = dict(zip(header, line))
+            if entry['author'] in store_meta:
+                author_id = store_meta[entry['author']]
+            else:
+                author_id = len(store_meta) + 1
+                store_meta[entry['author']] = author_id
+            fname = '{}.{}.{}'.format(entry['work_id'], author_id, idx)
+            yield fname, entry['body'].split('\n')
 
 
 if __name__ == '__main__':
-    import tokenizer
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model', default='ucto')
+    parser.add_argument('--tokenize', action='store_true')
+    args = parser.parse_args()
 
-    model, tokenize = "ucto", True
-
-    if tokenize:
-        tokenizer = tokenizer.tokenizer(model=model)
-        fname = 'AO3_{}.txt'.format(model)
+    tokenizer = None
+    if args.tokenize:
+        from process_utils import tokenizer
+        tokenizer = tokenizer(model=args.model)
+        fname = 'AO3_{}.tar.gz'.format(args.model)
     else:
-        fname = 'AO3.raw.txt'
+        fname = 'AO3.raw.tar.gz'
 
-    with open(fname, 'w+') as f:
-        for entry in read_csv():
-            for line in entry.get('body', '').split('\n'):
-                line = line.strip()
-                if line:
-                    if tokenize:
-                        for subline in tokenizer(line):
-                            f.write(subline)
-                            f.write("\n")
-                    else:
-                        f.write(line)
-                        f.write("\n")
+    from process_utils import package_tar
+    store_meta = {}
+    try:
+        package_tar(fname, read_csv(store_meta), tokenizer)
+    except Exception as e:
+        print("Exception!", str(e))
+
+    with open('AO3.meta.csv', 'w+') as f:
+        for k, v in store_meta.items():
+            f.write('{}\t{}\n'.format(k, v))

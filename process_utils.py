@@ -1,4 +1,7 @@
 
+import tarfile
+import io
+
 
 def tokenizer(model='spacy'):
     tok = None
@@ -10,23 +13,22 @@ def tokenizer(model='spacy'):
             paragraphdetection=False,
             quotedetection=True)
 
-        def to_lines(line):
+        def to_lines(line, ignore_quotes=False):
             tok.process(line)
-            lines = []
-            line = ''
-            quote = False
+            lines, line, quote = [], '', False
             for token in tok:
                 if token.nospace():
                     line += str(token)
                 else:
                     line += '{} '.format(str(token))
-                if token.isbeginofquote():
+                if token.isbeginofquote() and not ignore_quotes:
                     quote = True
-                if token.isendofquote():
+                if token.isendofquote() and not ignore_quotes:
                     quote = False
                 if token.iseos() and not quote:
                     lines.append(line.strip())
                     line = ''
+
             return lines
 
     elif model == 'nltk':
@@ -47,3 +49,25 @@ def tokenizer(model='spacy'):
         raise ValueError("Unknown model: [{}]".format(model))
 
     return to_lines
+
+
+def package_tar(tarname, it, tokenizer):
+    fnames = set()
+
+    with tarfile.open(tarname, 'w:gz') as tar:
+        for fname, lines in it:
+
+            if fname in fnames:
+                print("Duplicate file: {}".format(fname))
+                continue
+            fnames.add(fname)
+
+            if tokenizer is not None:
+                lines = tokenizer('\n'.join(lines))
+            lines = list(lines)
+
+            print("Adding #{} lines to file {}".format(len(lines), fname))
+            tarinfo = tarfile.TarInfo(fname)
+            lines = '\n'.join(lines).encode()
+            tarinfo.size = len(lines)  # length in bytes
+            tar.addfile(tarinfo, io.BytesIO(lines))
