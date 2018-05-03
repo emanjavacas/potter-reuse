@@ -92,7 +92,7 @@ def read_subtitles(path, tokenizer):
         # disable quote detection
         lines = tokenizer(' '.join(preprocessed), ignore_quotes=True)
         fname = os.path.basename(os.path.join(path, p))
-        yield (fname, list(postprocess(lines, tokenizer)))
+        yield (fname[:-3]+'txt', list(postprocess(lines, tokenizer)))
 
 
 if __name__ == '__main__':
