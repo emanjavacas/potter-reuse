@@ -18,21 +18,24 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', default='ucto')
     parser.add_argument('--tokenize', action='store_true')
-    parser.add_argument('--root', '/home/mike/GitRepos/fanfic/fanfics.json')
+    parser.add_argument('--ignore_quotes', action='store_true')
+    parser.add_argument('--root', default='/home/mike/GitRepos/fanfic/fanfics.json')
     args = parser.parse_args()
 
     tokenizer = None
     if args.tokenize:
         from process_utils import tokenizer
         tokenizer = tokenizer(model=args.model)
-        fname = 'fanfic_{}.tar.gz'.format(args.model)
+        fname = 'fanfic_{}.{}tar.gz'.format(
+            args.model, '.quote' if not args.ignore_quotes else '')
     else:
         fname = 'fanfic.raw.tar.gz'
 
     from process_utils import package_tar
     store_meta = defaultdict(int)
     try:
-        package_tar(fname, read_fanfic(args.root, store_meta), tokenizer)
+        package_tar(fname, read_fanfic(args.root, store_meta),
+                    tokenizer, args.ignore_quotes)
     except Exception as e:
         print("Exception!", str(e))
 

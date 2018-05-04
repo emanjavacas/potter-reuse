@@ -51,7 +51,7 @@ def tokenizer(model='spacy'):
     return to_lines
 
 
-def package_tar(tarname, it, tokenizer):
+def package_tar(tarname, it, tokenizer, ignore_quotes=False):
     fnames = set()
 
     with tarfile.open(tarname, 'w:gz') as tar:
@@ -63,7 +63,7 @@ def package_tar(tarname, it, tokenizer):
             fnames.add(fname)
 
             if tokenizer is not None:
-                lines = tokenizer('\n'.join(lines))
+                lines = tokenizer('\n'.join(lines), ignore_quotes=ignore_quotes)
             lines = list(lines)
 
             print("Adding #{} lines to file {}".format(len(lines), fname))
