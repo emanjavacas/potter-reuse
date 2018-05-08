@@ -23,7 +23,7 @@ def read_lines(*paths, verbose=False):
 
         else:
             if verbose:
-                print(" => Processing: {}".format(m.name))
+                print(" => Processing: {}".format(path))
 
             with open(path, 'r') as f:
                 for line in f:

@@ -3,10 +3,9 @@ import json
 import itertools
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine, Column, types, TypeDecorator
+from sqlalchemy import create_engine, Column, types, TypeDecorator, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import and_
+from sqlalchemy.orm import sessionmaker, relationship
 
 from text_indexer import BaseTextIndex
 import utils
@@ -58,9 +57,9 @@ class JSONEncodedDict(TypeDecorator):
 
 
 class Source(Base):
-    __tablename__ = 'TextIndex'
+    __tablename__ = 'Source'
 
-    id = Column(types.String, primary_key=True)  # {index_id.row}
+    id = Column(types.Integer, primary_key=True)
     index_id = Column(types.String)   # unique identifier for the index
     row = Column(types.Integer)       # text entry id (int mapping to faiss rows)
     text = Column(types.UnicodeText)  # text entry being indexed
@@ -69,38 +68,31 @@ class Source(Base):
     meta = Column(JSONEncodedDict)    # extra metadata
     date = Column(types.Date)         # just some timestamp
 
-    def __repr__(self):
-        return '<Source row="{}" text="{}" location="{}:{}">'.format(
-            self.row,
-            self.text[:20] + '...' if len(self.text) > 20 else self.text,
-            self.path,
-            self.num)
-
 
 class Query(Base):
-    __tablename__ = 'QueryIndex'
+    __tablename__ = 'Query'
 
     id = Column(types.Integer, primary_key=True)
     index_id = Column(types.String)   # same
     query_id = Column(types.String)   # unique identifier of the query
     text = Column(types.UnicodeText)  # text entry being queried
-    source = Column(types.Integer)    # int mapping to faiss row of the source text
-    score = Column(types.Float)       # score given to the match
     path = Column(types.String)       # path to file where query is coming from
     num = Column(types.Integer)       # line number
     meta = Column(JSONEncodedDict)    # extra metadata
     date = Column(types.Date)         # just some timestamp
-
-    def __repr__(self):
-        return '<Query match="{}" score="{:g}" text="{}" location="{}:{}">'.format(
-            self.source,
-            self.score,
-            self.text[:20] + '...' if len(self.text) > 20 else self.text,
-            self.path,
-            self.num)
+    matches = relationship("Match")
 
 
-#Base.metadata.drop_all(engine)
+class Match(Base):
+    __tablename__ = 'Match'
+
+    id = Column(types.Integer, primary_key=True)
+    source = Column(types.Integer)    # int mapping to faiss row of the source text
+    score = Column(types.Float)       # score given to the match
+    query_id = Column(types.Integer, ForeignKey("Query.id"))
+
+
+Base.metadata.drop_all(engine)
 Base.metadata.create_all(engine)  # ensure tables exist
 
 
@@ -133,7 +125,6 @@ class RelationalTextIndex(BaseTextIndex):
 
             for t, m in zip(text, meta):
                 session.add(Source(
-                    id='{}.{}'.format(self.name, m['id']),
                     row=m['id'],
                     index_id=self.name,
                     text=t,
@@ -141,63 +132,44 @@ class RelationalTextIndex(BaseTextIndex):
                     num=m['num']))
 
     def dump_query(self, query_name, generator):
-        with session_scope() as session:
-            session.bulk_insert_mappings(
-                Query,
-                [
-                    {'index_id': self.name,
-                     'query_id': query_name,
-                     'text': target,
-                     'source': source,
-                     'score': score,
-                     'path': meta['path'],
-                     'num': meta['num']}
-                    for target, meta, sources, scores in generator
-                    for source, score in zip(sources, scores)
-                ]
-            )
-        # # this code would be just a little bit faster
-        # engine.execute(Query.__table__.insert(),
-        #     [
-        #         {'index_id': self.name,
-        #          'query_id': query_name,
-        #          'text': target,
-        #          'source': source,
-        #          'score': score,
-        #          'path': meta['path'],
-        #          'num': meta['num']}
-        #         for target, meta, sources, scores in generator
-        #         for source, score in zip(sources, scores)
-        #     ]
-        # )
+        for chunk in utils.chunks(generator, 5000):  # transact every n items
+            with session_scope() as session:
+                for target, meta, sources, scores in chunk:
+                    q = Query(index_id=self.name,
+                              query_id=query_name,
+                              text=target,
+                              path=meta['path'],
+                              num=meta['num'])
+
+                    for source, score in zip(sources, scores):
+                        m = Match(source=source, score=score)
+                        q.matches.append(m)
+                        session.add(m)
+
+                    session.add(q)
 
     def get_indexed_text(self, text_id):
         with session_scope() as session:
-            match = session.query(Source).get(text_id)
+            match = session.query(Source) \
+                           .filter_by(index_id=self.name, row=text_id) \
+                           .first()
+
             return match.text, {'path': match.path, 'num': match.num}
 
-    def inspect_query(self, query_name, threshold, max_NNs):
-        # TODO: RelationalTextIndex can do actual search based on further metadata
+    def inspect_query(self, query_name, threshold, max_NNs, by_source=False):
         with session_scope() as session:
-            query = session \
-                .query(Query) \
-                .filter(and_(Query.query_id == query_name,
-                             Query.score >= threshold)) \
-                .order_by(Query.score.desc()) \
-                .order_by(Query.source)
+            query = session.query(Query) \
+                           .filter(Query.query_id==query_name) \
+                           .filter(Query.matches.any(Match.score) >= threshold)
 
-            for _, matches in itertools.groupby(query, lambda m: m.source):
-                sid, path, num = matches[0].source
-                source = session.query(Source).get('{}.{}'.format(self.name, sid))
+            for q in query.all():
+                match = {'target': q.text,
+                         'meta': {'path': q.path, 'num': q.num},
+                         'matches': []}
 
-                output = {'source': source.text,
-                          'meta': {'path': source.path, 'num': source.num},
-                          'matches': []}
+                for m in session.query(Match).filter_by(query_id=q.id).all():
+                    source, smeta = self.get_indexed_text(m.source)
+                    match['matches'].append(
+                        {'source': source, 'score': m.score, 'meta': smeta})
 
-                for match in utils.take(matches, max_NNs):
-                    output['matches'].append(
-                        {'target': match.text,
-                         'meta': {'path': match.path, 'num': match.num},
-                         'score': match.score})
-
-                yield output
+                yield match

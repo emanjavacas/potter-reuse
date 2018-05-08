@@ -1,4 +1,5 @@
 
+import os
 import argparse
 import sys
 
@@ -18,21 +19,27 @@ if __name__ == '__main__':
     parser.add_argument('--NNs', type=int, default=5)
     parser.add_argument('--dim', type=int, default=4800)
     parser.add_argument('--query_files', nargs='*')
+    parser.add_argument('--projection')
     parser.add_argument('--query_name')
     parser.add_argument('--threshold', type=float, default=0.5)
     args = parser.parse_args()
     actions = set(args.action.lower().split())
 
     print("Loading model...")
-    import skipthoughts
-    model = skipthoughts.load_model()
+    projection = None
+    if os.path.isfile(args.projection or ''):
+        np.load(args.projection)
 
-    def encoder(sents):
-        embs = np.array(skipthoughts.encode(model, sents, use_norm=False))
-        return embs
+    encoder, model = None, None
+    if 'index' in actions or 'query' in actions:
+        import skipthoughts
+        model = skipthoughts.load_model()
 
-    # def encoder(sents):
-    #     return np.random.randn(len(sents), args.dim)
+        def encoder(sents):
+            embs = np.array(skipthoughts.encode(model, sents, use_norm=False))
+            if projection is not None:
+                embs = np.einsum('ij,bj->bj', projection, embs)
+            return embs
 
     indexer = None
     try:
@@ -50,7 +57,7 @@ if __name__ == '__main__':
         indexer = indexer or Indexer(dim=args.dim, name=args.indexer)
         indexer.index_files(encoder, *args.index_files, verbose=True)
         if do_serialize:
-            print("Serializing index")
+            print("Serializing index...")
             indexer.serialize(args.indexer)
 
     if 'query' in actions:
@@ -64,7 +71,7 @@ if __name__ == '__main__':
             raise ValueError("Querying requires `query_files`")
 
         indexer.query_from_files(
-            encoder, args.query_name, *args.query_files, NNs=args.NNs)
+            encoder, args.query_name, *args.query_files, NNs=args.NNs, verbose=True)
 
     if 'inspect' in actions:
         if not args.results_file:

@@ -191,7 +191,7 @@ class Indexer(object):
             D, I = self.index.search(embs, NNs)
 
             # generate matches
-            yield from zip(targets, meta, I, D)
+            yield from zip(targets, meta, I.tolist(), D.tolist())
 
     def dump_query(self, encoder, inp, query_name, **kwargs):
         """
@@ -208,22 +208,27 @@ class Indexer(object):
         self.text_index.dump_query(
             query_name, self.query_generator(encoder, inp, **kwargs))
 
-    def query_from_files(self, encoder, query_name, *paths, **kwargs):
+    def query_from_files(self, encoder, query_name, *paths, verbose=False, **kwargs):
         """
         Run query over files with sentence per line format
         """
         inp = ((line, {'num': num, 'path': path})
-               for path, num, line in utils.read_lines(*paths))
+               for path, num, line in utils.read_lines(*paths, verbose=verbose))
 
         self.text_index.dump_query(
             query_name, self.query_generator(encoder, inp, **kwargs))
 
-    def inspect_query(self, query_name, threshold=0.0, max_NNs=5, **kwargs):
+    def inspect_query(self, query_name, threshold=0.0, max_NNs=5,
+                      by_source=False, **kwargs):
         """
-        Get a generator over matches where each match is
-        {'source': (source, source_meta),
-         'target': (target, target_meta), 
-         'score': similarity}
+        Get a generator over matches grouped by target where each item is
+
+            {'target': ...,
+             'meta': {'path': ..., 'num': ...},
+             'matches': [{'source': ..., 'meta': ..., 'score': ...}]}
+
+        If by_source is passed, then the grouping is done by source instead.
         """
         yield from self.text_index.inspect_query(
-            query_name, threshold=threshold, max_NNs=max_NNs, **kwargs)
+            query_name, threshold=threshold, max_NNs=max_NNs, by_source=by_source,
+            **kwargs)

@@ -57,7 +57,8 @@ class BaseTextIndex(object):
         """
         raise NotImplementedError
 
-    def inspect_query(self, query_name, threshold, max_NNs, skip=0, sort=False):
+    def inspect_query(self, query_name, threshold, max_NNs,
+                      by_source=False, skip=0, sort=False):
         """
         Retrieve matches from an existing query. Return a generator over
         matches 
@@ -167,10 +168,13 @@ class FileTextIndex(BaseTextIndex):
     def get_indexed_text(self, text_id):
         return self.text[text_id], self.meta[text_id]
 
-    def inspect_query(self, query_name, threshold, max_NNs, **kwargs):
+    def inspect_query(self, query_name, threshold, max_NNs, by_source=False, **kwargs):
         """
         Inspect query from file
         """
+        if by_source:
+            logging.warn("Ignoring `by_source`. {} doesn't support it."
+                         .format(type(self).__name__))
 
         if not os.path.isfile(utils.ensure_ext(query_name, 'tsv')):
             raise ValueError("Query doesn't exist: {}".format(query_name))
