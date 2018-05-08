@@ -11,9 +11,10 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('action')
-    parser.add_argument('--indexer', required=True)
+    parser.add_argument('--indexer', required=True, help="Name for the indexer. "
+                        "It will be used to store/load indexer to/from disk.")
     parser.add_argument('--index_files', nargs='*')
-    parser.add_argument('--bsize', type=int, default=10000)
+    parser.add_argument('--bsize', type=int, default=10000, help="Buffer size")
     parser.add_argument('--NNs', type=int, default=5)
     parser.add_argument('--dim', type=int, default=4800)
     parser.add_argument('--query_files', nargs='*')
@@ -22,16 +23,16 @@ if __name__ == '__main__':
     args = parser.parse_args()
     actions = set(args.action.lower().split())
 
-    # print("Loading model...")
-    # import skipthoughts
-    # model = skipthoughts.load_model()
-
-    # def encoder(sents):
-    #     embs = np.array(skipthoughts.encode(model, sents, use_norm=False))
-    #     return embs
+    print("Loading model...")
+    import skipthoughts
+    model = skipthoughts.load_model()
 
     def encoder(sents):
-        return np.random.randn(len(sents), args.dim)
+        embs = np.array(skipthoughts.encode(model, sents, use_norm=False))
+        return embs
+
+    # def encoder(sents):
+    #     return np.random.randn(len(sents), args.dim)
 
     indexer = None
     try:
@@ -46,9 +47,10 @@ if __name__ == '__main__':
         if len(args.index_files) == 0:
             raise ValueError("Indexing requires `index_files`")
 
-        indexer = indexer or Indexer(dim=args.dim)
-        indexer.index_files(encoder, *args.index_files)
+        indexer = indexer or Indexer(dim=args.dim, name=args.indexer)
+        indexer.index_files(encoder, *args.index_files, verbose=True)
         if do_serialize:
+            print("Serializing index")
             indexer.serialize(args.indexer)
 
     if 'query' in actions:

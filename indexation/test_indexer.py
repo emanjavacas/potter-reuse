@@ -26,14 +26,19 @@ for f in query_files:
     generate_text(f, 1000)
 
 indexer = Indexer(DIM,
-#                  make_text_index=RelationalTextIndex
+                  make_text_index=RelationalTextIndex
 )
-print("indexing")
+import time
+start = time.time()
 indexer.index_files(encoder, index_file)
-print("Querying")
+print("Indexing took: {:g}".format(time.time() - start))
+start = time.time()
 indexer.query_from_files(encoder, 'random_query', *query_files)
-print("Serializing")
+print("Querying took: {:g}".format(time.time() - start))
+start = time.time()
 indexer.serialize('random.index')
-print("Loading")
+print("Serializing took: {:g}".format(time.time() - start))
+start = time.time()
 i2=Indexer.load("random.index.tar")
+print("Loading took: {:g}".format(time.time() - start))
 

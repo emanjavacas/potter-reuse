@@ -37,7 +37,7 @@ class Indexer(object):
                  dim=None,
                  text_index=None,
                  name=None,
-                 make_text_index=FileTextIndex):
+                 make_text_index=RelationalTextIndex):
 
         self.name = name or str(uuid.uuid1())
         self.index = None if dim is None else faiss.IndexFlatIP(dim)
@@ -74,12 +74,12 @@ class Indexer(object):
             faiss.normalize_L2(embs)
             self.index_batch(embs, text, meta)
 
-    def index_files(self, encoder, *paths, **kwargs):
+    def index_files(self, encoder, *paths, verbose=False, **kwargs):
         """
         Index files
         """
         inp = ((line, {'path': path, 'num': num})
-               for path, num, line in utils.read_lines(*paths))
+               for path, num, line in utils.read_lines(*paths, verbose=verbose))
 
         self.index_generator(encoder, inp, **kwargs)
 

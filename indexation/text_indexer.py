@@ -189,20 +189,23 @@ class FileTextIndex(BaseTextIndex):
 
             for line in f:
                 target, path_, num, scores = line.strip().split('\t')
-                target_meta = {'path': paths_[int(path_)], 'num': int(num)}
+                tmeta = {'path': paths_[int(path_)], 'num': int(num)}
                 nns, scores = _parse_scores(scores)
 
                 # check threshold
                 if max(scores) < threshold:
                     continue
 
+                match = {'target': target, 'meta': tmeta, 'matches': []}
+
                 # package
                 for nn, score in utils.take(zip(nns, scores), max_NNs):
                     if score < threshold:
                         break
 
-                    source, source_meta = self.text[nn], self.meta[nn]
+                    match['matches'].append(
+                        {'source': self.text[nn],
+                         'meta': self.meta[nn],
+                         'score': score})
 
-                    yield {'target': (target, target_meta),
-                           'source': (source, source_meta),
-                           'score': score}
+                yield match
