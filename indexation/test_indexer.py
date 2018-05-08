@@ -42,4 +42,6 @@ print("Serializing took: {:g}".format(time.time() - start))
 start = time.time()
 i2=Indexer.load("random.index.tar")
 print("Loading took: {:g}".format(time.time() - start))
-
+start = time.time()
+next(i2.inspect_query('random_query'))
+print("Querying took: {:g}".format(time.time() - start))
