@@ -160,16 +160,18 @@ class RelationalTextIndex(BaseTextIndex):
         session = Session()     # no need to create session scope
         query = session.query(Query) \
                        .filter(Query.query_id==query_name) \
-                       .filter(Query.matches.any(Match.score) >= threshold)
+                       .join(Query.matches, aliased=True) \
+                       .filter(Match.score >= float(threshold))
 
-        for q in query.yield_per(100):
+        for q in query.yield_per(100):  # paginate over 100 items
             match = {'target': q.text,
                      'meta': {'path': q.path, 'num': q.num},
                      'matches': []}
 
             for m in session.query(Match).filter_by(query_id=q.id).all():
-                source, smeta = self.get_indexed_text(m.source)
-                match['matches'].append(
-                    {'source': source, 'score': m.score, 'meta': smeta})
+                if m.score >= threshold:
+                    source, smeta = self.get_indexed_text(m.source)
+                    match['matches'].append(
+                        {'source': source, 'score': m.score, 'meta': smeta})
 
             yield match
