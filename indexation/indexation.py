@@ -87,6 +87,9 @@ class Indexer(object):
         """
         Serialize index to single tar file and additional text index metadata
         """
+        if os.path.isfile(utils.ensure_ext(path, 'tar')):
+            raise ValueError("Index already exists")
+
         # index
         indexname = '/tmp/{}-index'.format(str(uuid.uuid1()))
         faiss.write_index(self.index, indexname)
@@ -145,7 +148,7 @@ class Indexer(object):
         self.index = index
 
     @classmethod
-    def load(cls, path):
+    def load(cls, path, inspect_only=False):
         """
         Instantiates Indexer from serialized tar
         """
@@ -154,10 +157,12 @@ class Indexer(object):
             name = tar.extractfile(cls.__id__).read().decode().strip()
             
             # read index
-            indextmp = '/tmp/{}-index'.format(str(uuid.uuid1()))
-            tar.extract(cls.__index__, path=indextmp)
-            index = faiss.read_index(os.path.join(indextmp, cls.__index__))
-            shutil.rmtree(indextmp)
+            index = None
+            if not inspect_only:
+                indextmp = '/tmp/{}-index'.format(str(uuid.uuid1()))
+                tar.extract(cls.__index__, path=indextmp)
+                index = faiss.read_index(os.path.join(indextmp, cls.__index__))
+                shutil.rmtree(indextmp)
 
             # text index
             text_index_type = tar.extractfile(cls.__text_index__).read().decode()
@@ -192,21 +197,6 @@ class Indexer(object):
 
             # generate matches
             yield from zip(targets, meta, I.tolist(), D.tolist())
-
-    def dump_query(self, encoder, inp, query_name, **kwargs):
-        """
-        Run query over batch of input sentences
-        
-        Parameters
-        ===========
-        encoder : function that encodes input text into sentence embeddings
-        inp : iterator over tuples of shape
-            (query, {"num": int, "path": string}), where
-            `query` is the query text, `num` is the line number of the query
-            and `path` is the source file where the query belongs to.
-        """
-        self.text_index.dump_query(
-            query_name, self.query_generator(encoder, inp, **kwargs))
 
     def query_from_files(self, encoder, query_name, *paths, verbose=False, **kwargs):
         """

@@ -25,13 +25,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
     actions = set(args.action.lower().split())
 
-    print("Loading model...")
     projection = None
     if os.path.isfile(args.projection or ''):
         np.load(args.projection)
 
     encoder, model = None, None
     if 'index' in actions or 'query' in actions:
+        print("Loading model...")
         import skipthoughts
         model = skipthoughts.load_model()
 
@@ -42,13 +42,15 @@ if __name__ == '__main__':
             return embs
 
     indexer = None
-    try:
-        indexer = Indexer.load(args.indexer)
-    except:
-        pass
 
     if 'index' in actions:
         print("Indexing...")
+
+        try:
+            indexer = Indexer.load(args.indexer)
+        except:
+            pass
+
         do_serialize = indexer is None and args.indexer
 
         if len(args.index_files) == 0:
@@ -64,6 +66,7 @@ if __name__ == '__main__':
         print("Querying...")
 
         if indexer is None:
+            indexer = Indexer.load(args.indexer)
             raise ValueError("Couldn't initialize indexer")
         if not args.query_name:
             raise ValueError("Querying requires `query_name`")
@@ -74,25 +77,29 @@ if __name__ == '__main__':
             encoder, args.query_name, *args.query_files, NNs=args.NNs, verbose=True)
 
     if 'inspect' in actions:
-        if not args.results_file:
-            raise ValueError("Inspecting requires `results_file`")
-        if len(args.query_files) == 0:
-            raise ValueError("Querying requires `query_files`")
+        indexer = indexer or Indexer.load(args.indexer, inspect_only=True)
 
-        matches = indexer.inspect(
-            args.results_file, threshold=args.threshold, max_NNs=args.NNs)
+        if not args.query_name:
+            raise ValueError("Inspect requires `query_name`")
 
-        try:
-            match = next(matches)
-            print(" => {}".format(match['source']), flush=True)
-            # TODO: print metadata
-            print(" *** [{:.3f}] {}\n".format(
-                match['score'], match['target']), flush=True)
+        matches = indexer.inspect_query(
+            args.query_name, threshold=args.threshold, max_NNs=args.NNs)
 
-        except BrokenPipeError:
-            print("Bye!", file=sys.stderr)
-
-        except StopIteration:
-            print("Finished!", file=sys.stderr)
+        while True:
+            try:
+                match = next(matches)
+                print(" => {}\n".format(match['target']), flush=True)
+                for m in match['matches']:
+                    print(" *** [{:.3f}] {}".format(
+                        m['score'], m['source']), flush=True)
+                print(flush=True)
+    
+            except BrokenPipeError:
+                print("Bye!", file=sys.stderr)
+                break
+    
+            except StopIteration:
+                print("Finished!", file=sys.stderr)
+                break
 
     sys.stderr.close()
